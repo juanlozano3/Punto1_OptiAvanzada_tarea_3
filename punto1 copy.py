@@ -221,73 +221,53 @@ modelAP.addConstr(d_auxiliar[5] + d_auxiliar[6] == 1, name="FinDeSemanaLibre")
 
 horarios_totales = []  # Guardará los nuevos horarios generados
 costos_totales = []    # Guardará los costos de cada horario
-while True: 
+# Optimización y generación de horarios
+while True:
     modelMP.optimize()
-    print(f"FO Master: {modelMP.objVal} --> #Cols: {num_columnas}")
-    
-    Duals = modelMP.getAttr("Pi", modelMP.getConstrs())
-    diccionario = {}
+    print(f"FO Master: {modelMP.objVal} --> #Cols: {len(horarios_totales)}")
 
-    indice_duals = 0
-    for i in D:
-        for j in F:
-            diccionario[(i, j)] = Duals[indice_duals]
-            indice_duals += 1
+    # Obtener los duales
+    duals = modelMP.getAttr("Pi", modelMP.getConstrs())
+    diccionario_duales = {(i, j): duals[indice] for indice, (i, j) in enumerate([(i, j) for i in D for j in F])}
 
-    modelAP.setObjective(quicksum((cij[i][j] - diccionario[i,j])*a_auxiliar[i,j] for i in D for j in F), GRB.MINIMIZE)
-
+    # Definir la función objetivo del problema auxiliar
+    modelAP.setObjective(
+        quicksum((cij[i][j] - diccionario_duales[i, j]) * a_auxiliar[i, j] for i in D for j in F),
+        GRB.MINIMIZE
+    )
     modelAP.optimize()
-    modelAP.setParam('OutputFlag', 0)
-    
-    minReduceCost = modelAP.getObjective().getValue()
 
-    # Break or continue
+    min_reduce_cost = modelAP.getObjective().getValue()
     tolerancia = -1e-6
-    if minReduceCost >= tolerancia:
-        
-        print(minReduceCost)
-        print(f"FO Aux (Costo Reducido): {modelAP.objVal} ")
-        print("\nColumn generation stops !\n")
-        break
-    else:
-        num_columnas += 1
-        print(modelAP.getAttr("X"))
-        col_vals = modelAP.getAttr("x", a_auxiliar)
-        print(col_vals)
 
-        
-        # Crear listas para cada día y reemplazar -0.0 por 0.0
-        lunes = [0.0 if val == -0 else val for j in F for val in [col_vals[0, j]]]  # Día 0 (Lunes)
-        martes = [0.0 if val == -0 else val for j in F for val in [col_vals[1, j]]]  # Día 1 (Martes)
-        miercoles = [0.0 if val == -0 else val for j in F for val in [col_vals[2, j]]]  # Día 2 (Miércoles)
-        jueves = [0.0 if val == -0 else val for j in F for val in [col_vals[3, j]]]  # Día 3 (Jueves)
-        viernes = [0.0 if val == -0 else val for j in F for val in [col_vals[4, j]]]  # Día 4 (Viernes)
-        sabado = [0.0 if val == -0 else val for j in F for val in [col_vals[5, j]]]  # Día 5 (Sábado)
-        domingo = [0.0 if val == -0 else val for j in F for val in [col_vals[6, j]]]  # Día 6 (Domingo)
-        # Imprimir el nuevo horario
-        print("Nuevo horario:")
-        print("Lunes:", lunes)
-        print("Martes:", martes)
-        print("Miércoles:", miercoles)
-        print("Jueves:", jueves)
-        print("Viernes:", viernes)
-        print("Sábado:", sabado)
-        print("Domingo:", domingo)
-        #Crear la nueva columna
-        nuevo_horario = [lunes, martes, miercoles, jueves, viernes, sabado, domingo]
-        solucion_inicial_def[num_columnas - 1]= nuevo_horario
-        nueva_columna = lunes + martes + miercoles + jueves + viernes + sabado + domingo
-        obj_j = costoH(nuevo_horario, cij)
-        horarios_totales.append(nuevo_horario)
-        costos_totales.append(obj_j)
-        newCol = Column(nueva_columna, demRestricciones)
-        modelMP.addVar(vtype = GRB.CONTINUOUS, obj = obj_j, column = newCol,  name="h")
-        modelMP.update()
-        # Agregar el nuevo costo a la lista de costos
-        print(f"Costo del turno: {costoH(nuevo_horario, cij)}")
-        Ch.append(costoH(nuevo_horario, cij))
-        print(f"Iteración {num_columnas - 6}")
-        print(f"FO Aux (Costo Reducido): {modelAP.objVal} ")
+    if min_reduce_cost >= tolerancia:
+        print(f"FO Aux (Costo Reducido): {modelAP.objVal} \n¡Deteniendo generación de columnas!")
+        break
+
+    # Obtener los valores de las variables auxiliares
+    col_vals = modelAP.getAttr("x", a_auxiliar)
+
+    # Crear el nuevo horario en un solo paso
+    nuevo_horario = [
+        [0.0 if col_vals[d, f] == -0.0 else col_vals[d, f] for f in F] for d in D
+    ]
+
+    # Agregar el nuevo horario y su costo
+    obj_j = costoH(nuevo_horario, cij)
+    horarios_totales.append(nuevo_horario)
+    costos_totales.append(obj_j)
+
+    # Añadir la nueva columna al modelo maestro
+    nueva_columna = [val for fila in nuevo_horario for val in fila]
+    newCol = Column(nueva_columna, modelMP.getConstrs())
+    modelMP.addVar(vtype=GRB.CONTINUOUS, obj=obj_j, column=newCol, name=f"h_{len(horarios_totales)}")
+    modelMP.update()
+
+    print(f"Costo del turno: {obj_j}")
+    print(f"FO Aux (Costo Reducido): {modelAP.objVal} \n¡Deteniendo generación de columnas!")
+
+    Ch.append(obj_j)
+    print(f"Iteración: {len(horarios_totales)}")
 # Convertir el problema maestro a entero
 for v in modelMP.getVars():
     v.setAttr("VType", GRB.INTEGER)
